@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-error Vault__Not_the_owner(address user);
+error Vault__Not_the_owner();
 error Vault__Max_contacts_reached();
 error Vault__Missing_required_infos();
 error Vault__Contact_not_exists(uint256 _contactId);
 
 contract Vault {
     event ContactAdded(
-        uint256 id,
+        uint256 indexed id,
         string indexed firstname,
         string indexed lastname,
-        string indexed email,
+        string email,
         string phone,
-        string physicalAddress,
-        string category
+        string category,
+        string physicalAddress
     );
 
     event ContactUpdated(
@@ -29,6 +29,7 @@ contract Vault {
 
     event ContactDeleted(uint256 id);
 
+    address private immutable OWNER;
     uint256 constant MAX_CONTACTS_PER_USER = 500;
     uint256 constant MAX_CATEGORIES_PER_USER = 10;
 
@@ -50,18 +51,26 @@ contract Vault {
     mapping(address user => mapping(string category => uint256[] contactsIds))
         public userContactsByCategory;
 
-    function addCategory() public {}
+    constructor() {
+        OWNER = msg.sender;
+    }
+
+    function addCategory() public onlyOwner {}
 
     function addContact(
         string memory _firstname,
         string memory _lastname,
         string memory _email,
         string memory _phone,
-        string memory _physicalAddress,
-        string memory _category
-    ) public requireLastNameAndFirstname(_firstname, _lastname) {
+        string memory _category,
+        string memory _physicalAddress
+    )
+        public
+        requireLastNameAndFirstname(_firstname, _lastname)
+        returns (Contact memory)
+    {
         Contact[] storage contacts = userContacts[msg.sender];
-        if (contacts.length < MAX_CONTACTS_PER_USER) {
+        if (contacts.length == MAX_CONTACTS_PER_USER) {
             revert Vault__Max_contacts_reached();
         }
 
@@ -69,7 +78,7 @@ contract Vault {
             revert Vault__Missing_required_infos();
         }
 
-        uint256 newContactId = userLastContactIndex[msg.sender];
+        uint256 newContactId = userLastContactIndex[msg.sender] + 1;
         Contact memory contact = Contact({
             id: newContactId,
             firstname: _firstname,
@@ -89,9 +98,11 @@ contract Vault {
             _lastname,
             _email,
             _phone,
-            _physicalAddress,
-            _category
+            _category,
+            _physicalAddress
         );
+
+        return contact;
     }
 
     function updateContact(
@@ -204,6 +215,20 @@ contract Vault {
         }
         _;
     }
+
+    modifier onlyOwner() {
+        if (msg.sender != OWNER) {
+            revert Vault__Not_the_owner();
+        }
+        _;
+    }
+
+    // modifier checkContactUnicity(
+    //     string memory _firstname,
+    //     string memory _lastname
+    // ) {
+    //     _;
+    // }
 
     // Getters
     // function getUserContacts(
