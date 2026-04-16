@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {console} from "forge-std/Test.sol";
+
 error Vault__Not_the_owner();
 error Vault__Max_contacts_reached();
 error Vault__Missing_required_infos();
@@ -90,7 +92,7 @@ contract Vault {
         });
 
         contacts.push(contact);
-        userContactToIndex[msg.sender][newContactId] = contacts.length;
+        userContactToIndex[msg.sender][newContactId] = contacts.length - 1;
 
         emit ContactAdded(
             newContactId,
@@ -116,34 +118,36 @@ contract Vault {
     )
         public
         contactExists(_contactId)
-        requireLastNameAndFirstname(_firstname, _lastname)
+        returns (
+            // requireLastNameAndFirstname(_firstname, _lastname)
+            Contact memory
+        )
     {
-        Contact memory contact = Contact({
-            id: _contactId,
-            firstname: _firstname,
-            lastname: _lastname,
-            email: _email,
-            phone: _phone,
-            physicalAddress: _physicalAddress,
-            category: _category
-        });
+        uint256 contactIndex = userContactToIndex[msg.sender][_contactId];
+        Contact storage contact = userContacts[msg.sender][contactIndex];
 
-        Contact[] storage contacts = userContacts[msg.sender];
-
-        if (contacts.length < MAX_CONTACTS_PER_USER) {
-            uint256 contactIndex = contacts.length;
-            contacts[contactIndex] = contact;
-        }
+        contact.firstname = isStrEmpty(_firstname)
+            ? contact.firstname
+            : _firstname;
+        contact.lastname = isStrEmpty(_lastname) ? contact.lastname : _lastname;
+        contact.email = isStrEmpty(_email) ? contact.email : _email;
+        contact.phone = isStrEmpty(_phone) ? contact.phone : _phone;
+        contact.category = isStrEmpty(_category) ? contact.category : _category;
+        contact.physicalAddress = isStrEmpty(_physicalAddress)
+            ? contact.physicalAddress
+            : _physicalAddress;
 
         emit ContactUpdated(
-            _contactId,
-            _firstname,
-            _lastname,
-            _email,
-            _phone,
-            _physicalAddress,
-            _category
+            contact.id,
+            contact.firstname,
+            contact.lastname,
+            contact.email,
+            contact.phone,
+            contact.physicalAddress,
+            contact.category
         );
+
+        return contact;
     }
 
     function deleteContact(
@@ -203,14 +207,18 @@ contract Vault {
         string memory _firstname,
         string memory _lastname
     ) {
-        if (bytes(_firstname).length == 0 || bytes(_lastname).length == 0) {
+        if (isStrEmpty(_firstname) || isStrEmpty(_lastname)) {
             revert Vault__Missing_required_infos();
         }
         _;
     }
 
+    function isStrEmpty(string memory _str) private pure returns (bool) {
+        return bytes(_str).length == 0;
+    }
+
     modifier contactExists(uint256 _contactId) {
-        if (userContactToIndex[msg.sender][_contactId] == 0) {
+        if (_contactId == 0) {
             revert Vault__Contact_not_exists(_contactId);
         }
         _;
