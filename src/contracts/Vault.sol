@@ -8,6 +8,7 @@ error Vault__Not_the_contact_owner();
 error Vault__Max_contacts_reached();
 error Vault__Missing_required_infos();
 error Vault__Contact_not_exists(uint256 _contactId);
+error Vault__Contact_already_exists(string firstname, string lastname);
 
 contract Vault {
     event ContactAdded(
@@ -47,14 +48,15 @@ contract Vault {
     }
 
     uint256 lastIndex = 0;
-    mapping(address user => Contact[] contacts) public userContacts;
+    mapping(address user => Contact[] contacts) internal userContacts;
     mapping(address user => mapping(uint256 id => uint256 index))
-        public userContactToIndex;
-    mapping(address user => mapping(uint256 id => string firstname))
-        public userContactIdTofirstname;
-    mapping(address user => uint256[] contactsIds) public userContactsIds;
+        internal userContactToIndex;
+    mapping(uint256 contactId => bool existing) internal contactExisting;
+    mapping(address user => mapping(string fullname => bool existing))
+        internal userContactFullnameExisting;
+    mapping(uint256 contactId => address contactOwner) contactIdToOwner;
     mapping(address user => mapping(string category => uint256[] contactsIds))
-        public userContactsByCategory;
+        internal userContactsByCategory;
 
     constructor() {
         OWNER = msg.sender;
@@ -72,6 +74,7 @@ contract Vault {
     )
         public
         requireLastNameAndFirstname(_firstname, _lastname)
+        checkContactDuplicating(_firstname, _lastname)
         returns (Contact memory)
     {
         Contact[] storage contacts = userContacts[msg.sender];
@@ -93,8 +96,11 @@ contract Vault {
 
         contacts.push(contact);
         userContactToIndex[msg.sender][newContactId] = contacts.length - 1;
-        userContactIdTofirstname[msg.sender][newContactId] = _firstname;
-        userContactsIds[msg.sender].push(newContactId);
+        contactExisting[newContactId] = true;
+        contactIdToOwner[newContactId] = msg.sender;
+        userContactFullnameExisting[msg.sender][
+            computeFullname(_firstname, _lastname)
+        ] = true;
 
         emit ContactAdded(
             newContactId,
@@ -105,6 +111,8 @@ contract Vault {
             _category,
             _physicalAddress
         );
+
+        lastIndex++;
 
         return contact;
     }
@@ -125,6 +133,21 @@ contract Vault {
     {
         uint256 contactIndex = userContactToIndex[msg.sender][_contactId];
         Contact storage contact = userContacts[msg.sender][contactIndex];
+        string memory oldFirstname = contact.firstname;
+        string memory oldlastname = contact.lastname;
+
+        string memory oldFullname = computeFullname(oldFirstname, oldlastname);
+        string memory newFullname = "";
+
+        if (
+            (compareStrings(oldFirstname, _firstname) ||
+                compareStrings(oldlastname, _lastname)) &&
+            userContactFullnameExisting[msg.sender][
+                computeFullname(_firstname, _lastname)
+            ]
+        ) {
+            revert Vault__Contact_already_exists(_firstname, _lastname);
+        }
 
         contact.firstname = isStrEmpty(_firstname)
             ? contact.firstname
@@ -136,6 +159,15 @@ contract Vault {
         contact.physicalAddress = isStrEmpty(_physicalAddress)
             ? contact.physicalAddress
             : _physicalAddress;
+
+        if (!isStrEmpty(_firstname) || !isStrEmpty(_lastname)) {
+            newFullname = computeFullname(contact.firstname, contact.lastname);
+        }
+
+        if (bytes(newFullname).length != 0) {
+            userContactFullnameExisting[msg.sender][oldFullname] = false;
+            userContactFullnameExisting[msg.sender][newFullname] = true;
+        }
 
         emit ContactUpdated(
             contact.id,
@@ -158,20 +190,22 @@ contract Vault {
         Contact[] storage contacts = userContacts[msg.sender]; // get user contacts
         uint256 contactsLength = contacts.length;
 
+        Contact memory contact = contacts[contactIndex];
+
         uint256 latestContactId = contacts[contactsLength - 1].id; // Get the latest contact id to update his index in array later
 
         userContactToIndex[msg.sender][latestContactId] = contactIndex; // update index of the element moved
+
+        contactExisting[_contactId] = false; // set contact existing to false
+
+        userContactFullnameExisting[msg.sender][
+            computeFullname(contact.firstname, contact.lastname)
+        ] = false;
 
         contacts[contactIndex] = contacts[contacts.length - 1]; // replace value at the contactIndex by the latest value in the array
         contacts.pop(); // delete latest element
 
         emit ContactDeleted(_contactId);
-    }
-
-    function getContacts() public view returns (Contact[] memory) {
-        Contact[] memory contacts = userContacts[msg.sender];
-
-        return contacts;
     }
 
     function filterContactsByCategory(
@@ -213,17 +247,45 @@ contract Vault {
         _;
     }
 
+    // function userContactExists(string memory _firstname, string memory _lastname) public view returs (bool) {
+    //     return contactFullnameToOwner[msg.se != msg.sender;
+    // }
+
+    function compareStrings(
+        string memory a,
+        string memory b
+    ) public pure returns (bool) {
+        return keccak256(abi.encodePacked(a)) == keccak256(abi.encodePacked(b));
+    }
+
+    function computeFullname(
+        string memory _firstname,
+        string memory _lastname
+    ) internal pure returns (string memory) {
+        return string.concat(_firstname, "_", _lastname);
+    }
+
     function isStrEmpty(string memory _str) private pure returns (bool) {
         return bytes(_str).length == 0;
     }
 
     modifier contactExists(uint256 _contactId) {
-        string memory firstname = userContactIdTofirstname[msg.sender][
-            _contactId
-        ];
-        console.log("contact firstname", firstname);
-        if (_contactId == 0 || isStrEmpty(firstname)) {
+        if (!contactExisting[_contactId]) {
             revert Vault__Contact_not_exists(_contactId);
+        }
+        _;
+    }
+
+    modifier checkContactDuplicating(
+        string memory _firstname,
+        string memory _lastname
+    ) {
+        if (
+            userContactFullnameExisting[msg.sender][
+                computeFullname(_firstname, _lastname)
+            ]
+        ) {
+            revert Vault__Contact_already_exists(_firstname, _lastname);
         }
         _;
     }
@@ -235,32 +297,26 @@ contract Vault {
         _;
     }
 
-    function userHasContact(uint256 _contactId) private view returns (bool) {
-        uint256[] memory contactsIds = userContactsIds[msg.sender];
-        bool response = true;
-
-        for (uint256 i = 0; i > contactsIds.length; ) {
-            uint256 id = contactsIds[i];
-            response = id == _contactId;
-            unchecked {
-                ++i;
-            }
-        }
-
-        return response;
-    }
-
     modifier onlyContactOwner(uint256 _contactId) {
-        if (!userHasContact(_contactId)) {
+        if (getContactOwner(_contactId) != msg.sender) {
             revert Vault__Not_the_contact_owner();
         }
         _;
     }
 
     // Getters
-    // function getUserContacts(
-    //     address _user
-    // ) public view returns (Contact[MAX_CONTACTS_PER_USER]) {
-    //     Contact[] memory contacts = userContacts[_user];
-    // }
+
+    function checkContactExisting(
+        uint256 _contactId
+    ) public view returns (bool) {
+        return contactExisting[_contactId];
+    }
+
+    function getContactOwner(uint256 _contactId) public view returns (address) {
+        return contactIdToOwner[_contactId];
+    }
+
+    function getContacts() public view returns (Contact[] memory) {
+        return userContacts[msg.sender];
+    }
 }
