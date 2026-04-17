@@ -2,10 +2,12 @@
 pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
-import {Vault, Vault__Missing_required_infos, Vault__Max_contacts_reached, Vault__Contact_not_exists} from "./../src/contracts/Vault.sol";
+import {Vault, Vault__Missing_required_infos, Vault__Max_contacts_reached, Vault__Contact_not_exists, Vault__Not_the_contact_owner} from "./../src/contracts/Vault.sol";
 
 contract TestVault is Test {
     Vault vault;
+    address bob = makeAddr("Bob");
+    address alice = makeAddr("Alice");
 
     function setUp() public {
         vault = new Vault();
@@ -68,8 +70,6 @@ contract TestVault is Test {
     function test_update_contact() external {
         Vault.Contact memory contact = createContact();
 
-        // console.log("contact id", contact.id);
-
         string memory newFistname = "Bob";
         string memory newEmail = "bob@email.com";
 
@@ -96,5 +96,30 @@ contract TestVault is Test {
 
         assertEq(contactUpdated.firstname, newFistname);
         assertEq(contactUpdated.email, newEmail);
+    }
+
+    function test_update_fails_if_contact_not_exists() external {
+        uint256 contactId = 2;
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Vault__Contact_not_exists.selector,
+                contactId
+            )
+        );
+        vault.updateContact(2, "John", "Doe", "", "", "", "");
+    }
+
+    function test_update_fails_if_not_contact_owner() external {
+        vm.prank(bob);
+        Vault.Contact memory contact = createContact();
+
+        console.log("test contact firstname", contact.firstname);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(Vault__Not_the_contact_owner.selector)
+        );
+        vm.prank(alice);
+        vault.updateContact(contact.id, "John", "Doe", "", "", "", "");
     }
 }

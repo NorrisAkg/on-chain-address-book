@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {console} from "forge-std/Test.sol";
 
 error Vault__Not_the_owner();
+error Vault__Not_the_contact_owner();
 error Vault__Max_contacts_reached();
 error Vault__Missing_required_infos();
 error Vault__Contact_not_exists(uint256 _contactId);
@@ -45,11 +46,13 @@ contract Vault {
         string category;
     }
 
-    mapping(address user => uint256 lastContactIndex)
-        public userLastContactIndex;
+    uint256 lastIndex = 0;
     mapping(address user => Contact[] contacts) public userContacts;
     mapping(address user => mapping(uint256 id => uint256 index))
         public userContactToIndex;
+    mapping(address user => mapping(uint256 id => string firstname))
+        public userContactIdTofirstname;
+    mapping(address user => uint256[] contactsIds) public userContactsIds;
     mapping(address user => mapping(string category => uint256[] contactsIds))
         public userContactsByCategory;
 
@@ -76,11 +79,8 @@ contract Vault {
             revert Vault__Max_contacts_reached();
         }
 
-        if (bytes(_firstname).length == 0 || bytes(_lastname).length == 0) {
-            revert Vault__Missing_required_infos();
-        }
+        uint256 newContactId = lastIndex + 1;
 
-        uint256 newContactId = userLastContactIndex[msg.sender] + 1;
         Contact memory contact = Contact({
             id: newContactId,
             firstname: _firstname,
@@ -93,6 +93,8 @@ contract Vault {
 
         contacts.push(contact);
         userContactToIndex[msg.sender][newContactId] = contacts.length - 1;
+        userContactIdTofirstname[msg.sender][newContactId] = _firstname;
+        userContactsIds[msg.sender].push(newContactId);
 
         emit ContactAdded(
             newContactId,
@@ -118,10 +120,8 @@ contract Vault {
     )
         public
         contactExists(_contactId)
-        returns (
-            // requireLastNameAndFirstname(_firstname, _lastname)
-            Contact memory
-        )
+        onlyContactOwner(_contactId)
+        returns (Contact memory)
     {
         uint256 contactIndex = userContactToIndex[msg.sender][_contactId];
         Contact storage contact = userContacts[msg.sender][contactIndex];
@@ -152,7 +152,7 @@ contract Vault {
 
     function deleteContact(
         uint256 _contactId
-    ) public contactExists(_contactId) {
+    ) public contactExists(_contactId) onlyContactOwner(_contactId) {
         uint256 contactIndex = userContactToIndex[msg.sender][_contactId]; // Get contact index
 
         Contact[] storage contacts = userContacts[msg.sender]; // get user contacts
@@ -218,7 +218,11 @@ contract Vault {
     }
 
     modifier contactExists(uint256 _contactId) {
-        if (_contactId == 0) {
+        string memory firstname = userContactIdTofirstname[msg.sender][
+            _contactId
+        ];
+        console.log("contact firstname", firstname);
+        if (_contactId == 0 || isStrEmpty(firstname)) {
             revert Vault__Contact_not_exists(_contactId);
         }
         _;
@@ -231,12 +235,27 @@ contract Vault {
         _;
     }
 
-    // modifier checkContactUnicity(
-    //     string memory _firstname,
-    //     string memory _lastname
-    // ) {
-    //     _;
-    // }
+    function userHasContact(uint256 _contactId) private view returns (bool) {
+        uint256[] memory contactsIds = userContactsIds[msg.sender];
+        bool response = true;
+
+        for (uint256 i = 0; i > contactsIds.length; ) {
+            uint256 id = contactsIds[i];
+            response = id == _contactId;
+            unchecked {
+                ++i;
+            }
+        }
+
+        return response;
+    }
+
+    modifier onlyContactOwner(uint256 _contactId) {
+        if (!userHasContact(_contactId)) {
+            revert Vault__Not_the_contact_owner();
+        }
+        _;
+    }
 
     // Getters
     // function getUserContacts(
