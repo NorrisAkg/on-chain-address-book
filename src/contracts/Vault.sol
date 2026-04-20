@@ -78,11 +78,12 @@ contract Vault {
         returns (Contact memory)
     {
         Contact[] storage contacts = userContacts[msg.sender];
-        if (contacts.length == MAX_CONTACTS_PER_USER) {
+        uint256 contactsLength = contacts.length;
+        if (contactsLength == MAX_CONTACTS_PER_USER) {
             revert Vault__Max_contacts_reached();
         }
 
-        uint256 newContactId = lastIndex + 1;
+        uint256 newContactId = ++lastIndex;
 
         Contact memory contact = Contact({
             id: newContactId,
@@ -95,12 +96,13 @@ contract Vault {
         });
 
         contacts.push(contact);
-        userContactToIndex[msg.sender][newContactId] = contacts.length - 1;
+        userContactToIndex[msg.sender][newContactId] = contactsLength;
         contactExisting[newContactId] = true;
         contactIdToOwner[newContactId] = msg.sender;
         userContactFullnameExisting[msg.sender][
             computeFullname(_firstname, _lastname)
         ] = true;
+        userContactsByCategory[msg.sender][_category].push(newContactId);
 
         emit ContactAdded(
             newContactId,
@@ -112,7 +114,9 @@ contract Vault {
             _physicalAddress
         );
 
-        lastIndex++;
+        // unchecked {
+        //     lastIndex++;
+        // }
 
         return contact;
     }
@@ -131,43 +135,80 @@ contract Vault {
         onlyContactOwner(_contactId)
         returns (Contact memory)
     {
-        uint256 contactIndex = userContactToIndex[msg.sender][_contactId];
-        Contact storage contact = userContacts[msg.sender][contactIndex];
+        address msgSender = msg.sender;
+        uint256 contactIndex = userContactToIndex[msgSender][_contactId];
+        Contact memory contact = userContacts[msgSender][contactIndex];
         string memory oldFirstname = contact.firstname;
-        string memory oldlastname = contact.lastname;
+        string memory oldLastname = contact.lastname;
+        string memory oldCategory = contact.category;
+        string memory updatedFirstname = isStrEmpty(_firstname)
+            ? oldFirstname
+            : _firstname;
+        string memory updatedLastname = isStrEmpty(_lastname)
+            ? oldLastname
+            : _lastname;
+        string memory updatedCategory = isStrEmpty(_category)
+            ? oldCategory
+            : _category;
 
-        string memory oldFullname = computeFullname(oldFirstname, oldlastname);
-        string memory newFullname = "";
+        uint256[] storage oldCategoryContactsIds = userContactsByCategory[
+            msgSender
+        ][oldCategory];
+        uint256 oldCategotyIdsLength = oldCategoryContactsIds.length;
 
-        if (
-            (compareStrings(oldFirstname, _firstname) ||
-                compareStrings(oldlastname, _lastname)) &&
-            userContactFullnameExisting[msg.sender][
-                computeFullname(_firstname, _lastname)
-            ]
-        ) {
-            revert Vault__Contact_already_exists(_firstname, _lastname);
+        bool firstnameChanged = !isStrEmpty(_firstname) &&
+            !compareStrings(_firstname, oldFirstname);
+        bool lastnameChanged = !isStrEmpty(_lastname) &&
+            !compareStrings(_lastname, oldLastname);
+        bool categoryChanged = !isStrEmpty(_category) &&
+            !compareStrings(_category, oldCategory);
+
+        if (firstnameChanged || lastnameChanged) {
+            string memory newFullname = computeFullname(
+                updatedFirstname,
+                updatedLastname
+            );
+            string memory oldFullname = computeFullname(
+                oldFirstname,
+                oldLastname
+            );
+
+            if (userContactFullnameExisting[msgSender][newFullname]) {
+                revert Vault__Contact_already_exists(
+                    updatedFirstname,
+                    updatedLastname
+                );
+            }
+
+            userContactFullnameExisting[msgSender][oldFullname] = false;
+            userContactFullnameExisting[msgSender][newFullname] = true;
         }
 
-        contact.firstname = isStrEmpty(_firstname)
-            ? contact.firstname
-            : _firstname;
-        contact.lastname = isStrEmpty(_lastname) ? contact.lastname : _lastname;
+        if (categoryChanged) {
+            for (uint256 i; i < oldCategotyIdsLength; ) {
+                if (oldCategoryContactsIds[i] == _contactId) {
+                    oldCategoryContactsIds[i] = oldCategoryContactsIds[
+                        oldCategotyIdsLength - 1
+                    ];
+                    oldCategoryContactsIds.pop();
+                }
+
+                unchecked {
+                    ++i;
+                }
+            }
+        }
+
+        contact.firstname = updatedFirstname;
+        contact.lastname = updatedLastname;
         contact.email = isStrEmpty(_email) ? contact.email : _email;
         contact.phone = isStrEmpty(_phone) ? contact.phone : _phone;
-        contact.category = isStrEmpty(_category) ? contact.category : _category;
+        contact.category = updatedCategory;
         contact.physicalAddress = isStrEmpty(_physicalAddress)
             ? contact.physicalAddress
             : _physicalAddress;
 
-        if (!isStrEmpty(_firstname) || !isStrEmpty(_lastname)) {
-            newFullname = computeFullname(contact.firstname, contact.lastname);
-        }
-
-        if (bytes(newFullname).length != 0) {
-            userContactFullnameExisting[msg.sender][oldFullname] = false;
-            userContactFullnameExisting[msg.sender][newFullname] = true;
-        }
+        userContacts[msgSender][contactIndex] = contact;
 
         emit ContactUpdated(
             contact.id,
@@ -192,6 +233,11 @@ contract Vault {
 
         Contact memory contact = contacts[contactIndex];
 
+        uint256[] storage contactCategoryContactsIds = userContactsByCategory[
+            msg.sender
+        ][contact.category];
+        uint256 contactIdsLength = contactCategoryContactsIds.length;
+
         uint256 latestContactId = contacts[contactsLength - 1].id; // Get the latest contact id to update his index in array later
 
         userContactToIndex[msg.sender][latestContactId] = contactIndex; // update index of the element moved
@@ -204,6 +250,19 @@ contract Vault {
 
         contacts[contactIndex] = contacts[contacts.length - 1]; // replace value at the contactIndex by the latest value in the array
         contacts.pop(); // delete latest element
+
+        for (uint256 i; i < contactIdsLength; ) {
+            if (contactCategoryContactsIds[i] == _contactId) {
+                contactCategoryContactsIds[i] = contactCategoryContactsIds[
+                    contactIdsLength - 1
+                ];
+                contactCategoryContactsIds.pop();
+            }
+
+            unchecked {
+                ++i;
+            }
+        }
 
         emit ContactDeleted(_contactId);
     }
@@ -218,7 +277,7 @@ contract Vault {
 
         Contact[] memory _userContacts = userContacts[msg.sender];
 
-        Contact[] memory resultContacts = new Contact[](0);
+        Contact[] memory resultContacts = new Contact[](contactsIdLength);
 
         for (uint256 i = 0; i < contactsIdLength; ) {
             uint256 contactIndex = userContactToIndex[msg.sender][
@@ -254,8 +313,10 @@ contract Vault {
     function compareStrings(
         string memory a,
         string memory b
-    ) public pure returns (bool) {
-        return keccak256(abi.encodePacked(a)) == keccak256(abi.encodePacked(b));
+    ) internal pure returns (bool) {
+        return
+            bytes(a).length == bytes(b).length &&
+            keccak256(abi.encodePacked(a)) == keccak256(abi.encodePacked(b));
     }
 
     function computeFullname(
@@ -265,9 +326,11 @@ contract Vault {
         return string.concat(_firstname, "_", _lastname);
     }
 
-    function isStrEmpty(string memory _str) private pure returns (bool) {
+    function isStrEmpty(string memory _str) internal pure returns (bool) {
         return bytes(_str).length == 0;
     }
+
+    //// Modifiers
 
     modifier contactExists(uint256 _contactId) {
         if (!contactExisting[_contactId]) {
