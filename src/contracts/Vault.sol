@@ -6,7 +6,7 @@ contract Vault {
     error Vault__Not_the_contact_owner();
     error Vault__Max_contacts_reached();
     error Vault__Missing_required_infos();
-    // error Vault__Contact_not_exists(uint256 _contactId);
+    error Vault__Contact_not_exists();
     error Vault__Contact_already_exists(string firstname, string lastname);
 
     /// Events
@@ -71,9 +71,9 @@ contract Vault {
     // mapping(uint256 contactId => bool existing) internal contactExisting;
 
     /**
-     * @notice Tells if a user's address contact exist with given fullname
+     * @notice Map user's address contact fullname with corresponding contact id
      */
-    mapping(address user => mapping(string fullname => bool existing))
+    mapping(address user => mapping(string fullname => uint256 contactId))
         internal userContactFullnameExisting;
 
     /**
@@ -98,7 +98,7 @@ contract Vault {
         if (
             userContactFullnameExisting[msg.sender][
                 computeFullname(_firstname, _lastname)
-            ]
+            ] != 0
         ) {
             revert Vault__Contact_already_exists(_firstname, _lastname);
         }
@@ -106,7 +106,7 @@ contract Vault {
     }
 
     modifier userHasContact(uint256 _contactId) {
-        if (!userContactExists[_contactId][_contactId]) {
+        if (!userContactExists[msg.sender][_contactId]) {
             revert Vault__Not_the_contact_owner();
         }
         _;
@@ -176,10 +176,9 @@ contract Vault {
 
         contacts.push(contact);
         userContactToIndex[msg.sender][newContactId] = contactsLength;
-        contactIdToOwner[newContactId] = msg.sender;
         userContactFullnameExisting[msg.sender][
             computeFullname(_firstname, _lastname)
-        ] = true;
+        ] = newContactId;
         userContactsByCategory[msg.sender][_category].push(newContactId);
 
         userLastContactIndex[msg.sender]++;
@@ -244,15 +243,15 @@ contract Vault {
                 oldLastname
             );
 
-            if (userContactFullnameExisting[msgSender][newFullname]) {
+            if (userContactFullnameExisting[msgSender][newFullname] != 0) {
                 revert Vault__Contact_already_exists(
                     updatedFirstname,
                     updatedLastname
                 );
             }
 
-            userContactFullnameExisting[msgSender][oldFullname] = false;
-            userContactFullnameExisting[msgSender][newFullname] = true;
+            userContactFullnameExisting[msgSender][oldFullname] = 0;
+            userContactFullnameExisting[msgSender][newFullname] = contact.id;
         }
 
         if (categoryChanged) {
@@ -323,7 +322,7 @@ contract Vault {
 
         userContactFullnameExisting[msg.sender][
             computeFullname(contact.firstname, contact.lastname)
-        ] = false;
+        ] = 0;
 
         if (contacts.length > 1) {
             contacts[contactIndex] = contacts[contacts.length - 1]; // replace value at the contactIndex by the latest value in the array
@@ -381,8 +380,23 @@ contract Vault {
     }
 
     function searchContactsByName(
-        string memory _name
-    ) public returns (Contact[] memory) {}
+        string memory _firstname,
+        string memory _lastname
+    ) public view returns (Contact memory) {
+        string memory fullname = computeFullname(_firstname, _lastname);
+
+        uint256 contactId = userContactFullnameExisting[msg.sender][fullname];
+
+        if (contactId == 0) {
+            revert Vault__Contact_not_exists();
+        }
+
+        uint256 contactIndex = userContactToIndex[msg.sender][contactId];
+        Contact[] memory contacts = userContacts[msg.sender];
+        Contact memory contact = contacts[contactIndex];
+
+        return contact;
+    }
 
     /**
      * @notice Compare two strings
@@ -427,7 +441,7 @@ contract Vault {
         uint256 _contactId
     ) public view returns (bool) {
         // return contactExisting[_contactId];
-        return userContactExists[msg.sender] != address(0);
+        return userContactExists[msg.sender][_contactId];
     }
 
     function getContacts() public view returns (Contact[] memory) {
