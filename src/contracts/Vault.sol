@@ -33,6 +33,7 @@ contract Vault {
     event ContactDeleted(uint256 id);
 
     enum Category {
+        None,
         Friend,
         Family,
         Professional,
@@ -49,9 +50,16 @@ contract Vault {
         Category category;
     }
 
-    address private immutable OWNER;
+    struct ContactInput {
+        string firstname;
+        string lastname;
+        string email;
+        string phone;
+        string physicalAddress;
+        Category category;
+    }
+
     uint256 constant MAX_CONTACTS_PER_USER = 500;
-    uint256 constant MAX_CATEGORIES_PER_USER = 10;
 
     // uint256 lastIndex = 0;
     mapping(address user => uint256 lastIndex) userLastContactIndex;
@@ -59,6 +67,7 @@ contract Vault {
      * @notice Maps a user's address to their contacts
      */
     mapping(address user => Contact[] contacts) internal userContacts;
+
     /**
      * @notice Retrieve user's address specific contact index
      */
@@ -84,10 +93,11 @@ contract Vault {
     mapping(address user => mapping(Category category => uint256[] contactsIds))
         internal userContactsByCategory;
 
-    /**
-     * @notice Tells if category has at least one contact attached
-     */
-    mapping(string category => bool hasContact) internal categoryHasContact;
+    // /**
+    //  * @notice Tells if category has at least one contact attached
+    //  */
+    // mapping(address user => mapping(string category => bool hasContact))
+    //     internal categoryHasContact;
 
     //// Modifiers
 
@@ -125,35 +135,23 @@ contract Vault {
     /**
      * @notice Constructor
      */
-    constructor() {
-        OWNER = msg.sender;
-    }
+    constructor() {}
 
     /// Public functions
 
     /**
-     * @notice Create new contact for the msg.sender with given params
+     * @notice Creates new contact for the msg.sender with given params
      *
-     * @param _firstname contact firsname
-     * @param _lastname contact lastname
-     * @param _email contact email
-     * @param _phone contact phone number
-     * @param _category category of contact
-     * @param _physicalAddress physical address of contact
+     * @param input contact firsname
      *
-     * @return contact the just created contact
+     * @return Contact the just created contact
      */
     function addContact(
-        string memory _firstname,
-        string memory _lastname,
-        string memory _email,
-        string memory _phone,
-        Category _category,
-        string memory _physicalAddress
+        ContactInput calldata input
     )
         public
-        requireLastNameAndFirstname(_firstname, _lastname)
-        checkContactDuplicating(_firstname, _lastname)
+        requireLastNameAndFirstname(input.firstname, input.lastname)
+        checkContactDuplicating(input.firstname, input.lastname)
         returns (Contact memory)
     {
         Contact[] storage contacts = userContacts[msg.sender];
@@ -162,40 +160,52 @@ contract Vault {
             revert Vault__Max_contacts_reached();
         }
 
-        uint256 newContactId = userLastContactIndex[msg.sender] + 1;
+        uint256 newContactId = ++userLastContactIndex[msg.sender];
 
         Contact memory contact = Contact({
             id: newContactId,
-            firstname: _firstname,
-            lastname: _lastname,
-            email: _email,
-            phone: _phone,
-            physicalAddress: _physicalAddress,
-            category: _category
+            firstname: input.firstname,
+            lastname: input.lastname,
+            email: input.email,
+            phone: input.phone,
+            physicalAddress: input.physicalAddress,
+            category: input.category
         });
 
         contacts.push(contact);
         userContactToIndex[msg.sender][newContactId] = contactsLength;
         userContactFullnameExisting[msg.sender][
-            computeFullname(_firstname, _lastname)
+            computeFullname(input.firstname, input.lastname)
         ] = newContactId;
-        userContactsByCategory[msg.sender][_category].push(newContactId);
-
-        userLastContactIndex[msg.sender]++;
+        userContactExists[msg.sender][newContactId] = true;
+        userContactsByCategory[msg.sender][input.category].push(newContactId);
 
         emit ContactAdded(
             newContactId,
-            _firstname,
-            _lastname,
-            _email,
-            _phone,
-            _category,
-            _physicalAddress
+            input.firstname,
+            input.lastname,
+            input.email,
+            input.phone,
+            input.category,
+            input.physicalAddress
         );
 
         return contact;
     }
 
+    /**
+     * @notice Updates contact corresponding to given id with given params
+     *
+     * @param _contactId Contact id
+     * @param _firstname New Contact firstname
+     * @param _lastname New Contact lastname
+     * @param _email New Contact email
+     * @param _phone New Contact Phone
+     * @param _physicalAddress New Contact physical address
+     * @param _category New Contact category
+     *
+     * @return Contact Updated contact
+     */
     function updateContact(
         uint256 _contactId,
         string memory _firstname,
@@ -204,34 +214,28 @@ contract Vault {
         string memory _phone,
         string memory _physicalAddress,
         Category _category
-    )
-        public
-        // contactExists(_contactId)
-        userHasContact(_contactId)
-        returns (Contact memory)
-    {
+    ) public userHasContact(_contactId) returns (Contact memory) {
         address msgSender = msg.sender;
         uint256 contactIndex = userContactToIndex[msgSender][_contactId];
         Contact storage contact = userContacts[msgSender][contactIndex];
 
-        string memory oldFirstname = contact.firstname;
-        string memory oldLastname = contact.lastname;
-        Category oldCategory = contact.category;
-
         string memory updatedFirstname = isStrEmpty(_firstname)
-            ? oldFirstname
+            ? contact.firstname
             : _firstname;
         string memory updatedLastname = isStrEmpty(_lastname)
-            ? oldLastname
+            ? contact.lastname
             : _lastname;
 
-        bool categoryChanged = _category != oldCategory;
-        Category updatedCategory = categoryChanged ? _category : oldCategory;
+        bool categoryChanged = _category != Category.None &&
+            _category != contact.category;
+        Category updatedCategory = categoryChanged
+            ? _category
+            : contact.category;
 
         bool firstnameChanged = !isStrEmpty(_firstname) &&
-            !compareStrings(_firstname, oldFirstname);
+            !compareStrings(_firstname, contact.firstname);
         bool lastnameChanged = !isStrEmpty(_lastname) &&
-            !compareStrings(_lastname, oldLastname);
+            !compareStrings(_lastname, contact.lastname);
 
         if (firstnameChanged || lastnameChanged) {
             string memory newFullname = computeFullname(
@@ -239,8 +243,8 @@ contract Vault {
                 updatedLastname
             );
             string memory oldFullname = computeFullname(
-                oldFirstname,
-                oldLastname
+                contact.firstname,
+                contact.lastname
             );
 
             if (userContactFullnameExisting[msgSender][newFullname] != 0) {
@@ -257,7 +261,7 @@ contract Vault {
         if (categoryChanged) {
             uint256[] storage oldCategoryContactsIds = userContactsByCategory[
                 msgSender
-            ][oldCategory];
+            ][contact.category];
             uint256 oldCategotyIdsLength = oldCategoryContactsIds.length;
 
             if (oldCategotyIdsLength == 1) {
@@ -281,6 +285,7 @@ contract Vault {
 
         contact.firstname = updatedFirstname;
         contact.lastname = updatedLastname;
+
         contact.email = isStrEmpty(_email) ? contact.email : _email;
         contact.phone = isStrEmpty(_phone) ? contact.phone : _phone;
         contact.category = updatedCategory;
@@ -301,6 +306,11 @@ contract Vault {
         return contact;
     }
 
+    /**
+     * @notice Deletes the user's address contact corresponding to the given id
+     *
+     * @param _contactId contact Id
+     */
     function deleteContact(
         uint256 _contactId
     ) public userHasContact(_contactId) {
@@ -316,18 +326,22 @@ contract Vault {
         ][contact.category];
         uint256 contactIdsLength = userCategoryContactsIds.length;
 
-        uint256 latestContactId = contacts[contactsLength - 1].id; // Get the latest contact id to update his index in array later
+        if (contacts.length > 1) {
+            uint256 latestContactId = contacts[contactsLength - 1].id; // Get the latest contact id to update his index in array later
+            contacts[contactIndex] = contacts[contacts.length - 1]; // replace value at the contactIndex by the latest value in the array
 
-        userContactToIndex[msg.sender][latestContactId] = contactIndex; // update index of the element moved
+            userContactToIndex[msg.sender][latestContactId] = contactIndex; // update index of the element moved
+
+            contacts.pop(); // delete latest element
+        } else {
+            contacts.pop();
+        }
 
         userContactFullnameExisting[msg.sender][
             computeFullname(contact.firstname, contact.lastname)
         ] = 0;
 
-        if (contacts.length > 1) {
-            contacts[contactIndex] = contacts[contacts.length - 1]; // replace value at the contactIndex by the latest value in the array
-        }
-        contacts.pop(); // delete latest element
+        userContactExists[msg.sender][_contactId] = false;
 
         if (contactIdsLength == 1) {
             userCategoryContactsIds.pop();
@@ -350,6 +364,13 @@ contract Vault {
         emit ContactDeleted(_contactId);
     }
 
+    /**
+     * @notice Gets user contacts correspondig to given category
+     *
+     * @param _category Category to filter by
+     *
+     * @return Contact[] User's category contacts found
+     */
     function filterContactsByCategory(
         Category _category
     ) public view returns (Contact[] memory) {
@@ -379,7 +400,15 @@ contract Vault {
         return resultContacts;
     }
 
-    function searchContactsByName(
+    /**
+     * @notice Gets user's address contact corresponding to the given firstname and lastname
+     *
+     * @param _firstname contact firstname
+     * @param _lastname contact lastname
+     *
+     * @return Contact Contact found
+     */
+    function searchContactByName(
         string memory _firstname,
         string memory _lastname
     ) public view returns (Contact memory) {
@@ -392,16 +421,18 @@ contract Vault {
         }
 
         uint256 contactIndex = userContactToIndex[msg.sender][contactId];
-        Contact[] memory contacts = userContacts[msg.sender];
-        Contact memory contact = contacts[contactIndex];
+        Contact memory contact = userContacts[msg.sender][contactIndex];
 
         return contact;
     }
 
     /**
      * @notice Compare two strings
+     *
      * @param a First string
      * @param b Second string
+     *
+     * @return Bool
      */
     function compareStrings(
         string memory a,
@@ -418,7 +449,8 @@ contract Vault {
      * @notice Compute fullname from firstname and lastname
      * @param _firstname firstname
      * @param _lastname lastname
-     * @return fullname computed fullname
+     *
+     * @return string computed fullname
      */
     function computeFullname(
         string memory _firstname,
@@ -429,21 +461,48 @@ contract Vault {
 
     /**
      * @notice Check if is string is empty
+     *
      * @param _str String to check
+     *
+     * @return bool
      */
     function isStrEmpty(string memory _str) internal pure returns (bool) {
         return bytes(_str).length == 0;
     }
 
+    // /**
+    //  * @notice Converts string data to bytes
+    //  *
+    //  * @param _str string data to convert
+    //  *
+    //  * @return bytes
+    //  */
+    // function strToBytes(
+    //     string memory _str
+    // ) internal pure returns (bytes memory) {
+    //     return bytes(_str);
+    // }
+
     // Getters
 
+    /**
+     * @notice Checks if user's address has contact with given id
+     *
+     * @param _contactId contact id
+     *
+     * @return bool
+     */
     function checkUserContactExisting(
         uint256 _contactId
     ) public view returns (bool) {
-        // return contactExisting[_contactId];
         return userContactExists[msg.sender][_contactId];
     }
 
+    /**
+     * @notice Gets all user's address contacts
+     *
+     * @return Contact[]
+     */
     function getContacts() public view returns (Contact[] memory) {
         return userContacts[msg.sender];
     }

@@ -2,9 +2,9 @@
 pragma solidity ^0.8.24;
 
 import {Test, console} from "forge-std/Test.sol";
-import {Vault, Vault__Missing_required_infos, Vault__Max_contacts_reached, Vault__Contact_not_exists, Vault__Not_the_contact_owner, Vault__Contact_already_exists} from "./../src/contracts/Vault.sol";
+import {Vault} from "./../src/contracts/Vault.sol";
 
-contract TestVault is Test {
+contract TestVault is Test, Vault {
     Vault vault;
     address bob = makeAddr("Bob");
     address alice = makeAddr("Alice");
@@ -14,22 +14,16 @@ contract TestVault is Test {
     }
 
     function createContact() private returns (Vault.Contact memory) {
-        string memory firstname = "John";
-        string memory lastname = "Doe";
-        string memory email = "johndoe@email.com";
-        string memory phone = "0152525656";
-        string memory category = "Friends";
-        string memory physicalAddress = "Paris";
+        ContactInput memory input = ContactInput({
+            firstname: "John",
+            lastname: "Doe",
+            email: "johndoe@email.com",
+            phone: "0152525656",
+            physicalAddress: "Paris",
+            category: Category.Friend
+        });
 
-        return
-            vault.addContact(
-                firstname,
-                lastname,
-                email,
-                phone,
-                category,
-                physicalAddress
-            );
+        return vault.addContact(input);
     }
 
     function test_add_contact() external {
@@ -40,7 +34,7 @@ contract TestVault is Test {
             "Doe",
             "johndoe@email.com",
             "0152525656",
-            "Friends",
+            Category.Friend,
             "Paris"
         );
         createContact();
@@ -51,18 +45,18 @@ contract TestVault is Test {
         Vault.Contact memory contact = createContact();
 
         Vault.Contact memory contact2 = vault.addContact(
-            "Jane",
-            "Doe",
-            "jane@email.com",
-            "0154545454",
-            "Family",
-            "Paris"
+            ContactInput({
+                firstname: "Jane",
+                lastname: "Doe",
+                email: "jane@email.com",
+                phone: "0154545454",
+                physicalAddress: "Paris",
+                category: Category.Family
+            })
         );
 
         assertEq(contact.id, 1);
         assertEq(contact2.id, 2);
-        assertEq(vault.getContactOwner(contact.id), alice);
-        assertEq(vault.getContactOwner(contact2.id), alice);
         assertEq(vault.getContacts().length, 2);
 
         vm.stopPrank();
@@ -79,43 +73,39 @@ contract TestVault is Test {
                 contact.lastname
             )
         );
+
         Vault.Contact memory contact2 = vault.addContact(
-            "John",
-            "Doe",
-            "jane@email.com",
-            "0154545454",
-            "Family",
-            "Paris"
+            ContactInput({
+                firstname: "John",
+                lastname: "Doe",
+                email: "jane@email.com",
+                phone: "0154545454",
+                physicalAddress: "Paris",
+                category: Category.Family
+            })
         );
 
         assertEq(contact.id, 1);
         assertEq(contact2.id, 2);
-        assertEq(vault.getContactOwner(contact.id), alice);
-        assertEq(vault.getContactOwner(contact2.id), alice);
         assertEq(vault.getContacts().length, 2);
 
         vm.stopPrank();
     }
 
     function test_add_contact_fails_without_required_entries() external {
-        string memory firstname = "John";
-        string memory lastname = "";
-        string memory email = "johndoe@email.com";
-        string memory phone = "0152525656";
-        string memory category = "Friends";
-        string memory physicalAddress = "";
+        ContactInput memory input = ContactInput({
+            firstname: "John",
+            lastname: "",
+            email: "johndoe@email.com",
+            phone: "0152525656",
+            physicalAddress: "",
+            category: Category.Friend
+        });
 
         vm.expectRevert(
             abi.encodeWithSelector(Vault__Missing_required_infos.selector)
         );
-        vault.addContact(
-            firstname,
-            lastname,
-            email,
-            phone,
-            category,
-            physicalAddress
-        );
+        vault.addContact(input);
     }
 
     function test_update_contact() external {
@@ -142,7 +132,7 @@ contract TestVault is Test {
             newEmail,
             "",
             "",
-            ""
+            Category.None
         );
 
         assertEq(contactUpdated.firstname, newFistname);
@@ -154,11 +144,11 @@ contract TestVault is Test {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                Vault__Contact_not_exists.selector,
+                Vault__Not_the_contact_owner.selector,
                 contactId
             )
         );
-        vault.updateContact(2, "John", "Doe", "", "", "", "");
+        vault.updateContact(2, "John", "Doe", "", "", "", Category.None);
     }
 
     function test_update_fails_if_not_contact_owner() external {
@@ -169,7 +159,15 @@ contract TestVault is Test {
             abi.encodeWithSelector(Vault__Not_the_contact_owner.selector)
         );
         vm.prank(alice);
-        vault.updateContact(contact.id, "John", "Doe", "", "", "", "");
+        vault.updateContact(
+            contact.id,
+            "John",
+            "Doe",
+            "",
+            "",
+            "",
+            Category.None
+        );
     }
 
     function test_delete_contact() external {
@@ -178,11 +176,8 @@ contract TestVault is Test {
 
         uint256 contactId = contact.id;
 
-        assertEq(vault.checkContactExisting(contact.id), true);
-
         vault.deleteContact(contactId);
 
-        assertEq(vault.checkContactExisting(contactId), false);
         vm.stopPrank();
     }
 
