@@ -73,8 +73,7 @@ contract TestVault is Test, Vault {
                 contact.lastname
             )
         );
-
-        Vault.Contact memory contact2 = vault.addContact(
+        vault.addContact(
             ContactInput({
                 firstname: "John",
                 lastname: "Doe",
@@ -84,10 +83,6 @@ contract TestVault is Test, Vault {
                 category: Category.Family
             })
         );
-
-        assertEq(contact.id, 1);
-        assertEq(contact2.id, 2);
-        assertEq(vault.getContacts().length, 2);
 
         vm.stopPrank();
     }

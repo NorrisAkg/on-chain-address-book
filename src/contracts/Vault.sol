@@ -74,15 +74,10 @@ contract Vault {
     mapping(address user => mapping(uint256 id => uint256 index))
         internal userContactToIndex;
 
-    // /**
-    //  * @notice Tells if a contact exists with given contactId
-    //  */
-    // mapping(uint256 contactId => bool existing) internal contactExisting;
-
     /**
      * @notice Map user's address contact fullname with corresponding contact id
      */
-    mapping(address user => mapping(string fullname => uint256 contactId))
+    mapping(address user => mapping(bytes32 fullname => uint256 contactId))
         internal userContactFullnameExisting;
 
     /**
@@ -93,42 +88,32 @@ contract Vault {
     mapping(address user => mapping(Category category => uint256[] contactsIds))
         internal userContactsByCategory;
 
-    // /**
-    //  * @notice Tells if category has at least one contact attached
-    //  */
-    // mapping(address user => mapping(string category => bool hasContact))
-    //     internal categoryHasContact;
-
     //// Modifiers
 
     modifier checkContactDuplicating(
         string memory _firstname,
         string memory _lastname
     ) {
-        if (
-            userContactFullnameExisting[msg.sender][
-                computeFullname(_firstname, _lastname)
-            ] != 0
-        ) {
-            revert Vault__Contact_already_exists(_firstname, _lastname);
-        }
+        _checkContactDuplicating(_firstname, _lastname);
         _;
     }
 
     modifier userHasContact(uint256 _contactId) {
+        _checkIfUserHasContact(_contactId);
+        _;
+    }
+
+    function _checkIfUserHasContact(uint256 _contactId) internal view {
         if (!userContactExists[msg.sender][_contactId]) {
             revert Vault__Not_the_contact_owner();
         }
-        _;
     }
 
     modifier requireLastNameAndFirstname(
         string memory _firstname,
         string memory _lastname
     ) {
-        if (isStrEmpty(_firstname) || isStrEmpty(_lastname)) {
-            revert Vault__Missing_required_infos();
-        }
+        _requireLastNameAndFirstname(_firstname, _lastname);
         _;
     }
 
@@ -142,7 +127,7 @@ contract Vault {
     /**
      * @notice Creates new contact for the msg.sender with given params
      *
-     * @param input contact firsname
+     * @param input contact data
      *
      * @return Contact the just created contact
      */
@@ -175,7 +160,7 @@ contract Vault {
         contacts.push(contact);
         userContactToIndex[msg.sender][newContactId] = contactsLength;
         userContactFullnameExisting[msg.sender][
-            computeFullname(input.firstname, input.lastname)
+            strToBytes32(computeFullname(input.firstname, input.lastname))
         ] = newContactId;
         userContactExists[msg.sender][newContactId] = true;
         userContactsByCategory[msg.sender][input.category].push(newContactId);
@@ -247,15 +232,23 @@ contract Vault {
                 contact.lastname
             );
 
-            if (userContactFullnameExisting[msgSender][newFullname] != 0) {
+            if (
+                userContactFullnameExisting[msgSender][
+                    strToBytes32(newFullname)
+                ] != 0
+            ) {
                 revert Vault__Contact_already_exists(
                     updatedFirstname,
                     updatedLastname
                 );
             }
 
-            userContactFullnameExisting[msgSender][oldFullname] = 0;
-            userContactFullnameExisting[msgSender][newFullname] = contact.id;
+            userContactFullnameExisting[msgSender][
+                strToBytes32(oldFullname)
+            ] = 0;
+            userContactFullnameExisting[msgSender][
+                strToBytes32(newFullname)
+            ] = contact.id;
         }
 
         if (categoryChanged) {
@@ -338,7 +331,7 @@ contract Vault {
         }
 
         userContactFullnameExisting[msg.sender][
-            computeFullname(contact.firstname, contact.lastname)
+            strToBytes32(computeFullname(contact.firstname, contact.lastname))
         ] = 0;
 
         userContactExists[msg.sender][_contactId] = false;
@@ -414,7 +407,9 @@ contract Vault {
     ) public view returns (Contact memory) {
         string memory fullname = computeFullname(_firstname, _lastname);
 
-        uint256 contactId = userContactFullnameExisting[msg.sender][fullname];
+        uint256 contactId = userContactFullnameExisting[msg.sender][
+            strToBytes32(fullname)
+        ];
 
         if (contactId == 0) {
             revert Vault__Contact_not_exists();
@@ -424,6 +419,19 @@ contract Vault {
         Contact memory contact = userContacts[msg.sender][contactIndex];
 
         return contact;
+    }
+
+    /// Internal functions
+
+    /**
+     * @notice Converts string to bytes32
+     *
+     * @param _str String to convert
+     *
+     * @return string
+     */
+    function strToBytes32(string memory _str) internal pure returns (bytes32) {
+        return bytes32(keccak256(abi.encodePacked(_str)));
     }
 
     /**
@@ -442,8 +450,6 @@ contract Vault {
             bytes(a).length == bytes(b).length &&
             keccak256(abi.encodePacked(a)) == keccak256(abi.encodePacked(b));
     }
-
-    /// Internal functions
 
     /**
      * @notice Compute fullname from firstname and lastname
@@ -470,20 +476,29 @@ contract Vault {
         return bytes(_str).length == 0;
     }
 
-    // /**
-    //  * @notice Converts string data to bytes
-    //  *
-    //  * @param _str string data to convert
-    //  *
-    //  * @return bytes
-    //  */
-    // function strToBytes(
-    //     string memory _str
-    // ) internal pure returns (bytes memory) {
-    //     return bytes(_str);
-    // }
+    function _requireLastNameAndFirstname(
+        string memory _firstname,
+        string memory _lastname
+    ) internal pure {
+        if (isStrEmpty(_firstname) || isStrEmpty(_lastname)) {
+            revert Vault__Missing_required_infos();
+        }
+    }
 
-    // Getters
+    function _checkContactDuplicating(
+        string memory _firstname,
+        string memory _lastname
+    ) internal view {
+        if (
+            userContactFullnameExisting[msg.sender][
+                strToBytes32(computeFullname(_firstname, _lastname))
+            ] != 0
+        ) {
+            revert Vault__Contact_already_exists(_firstname, _lastname);
+        }
+    }
+
+    /// Getters
 
     /**
      * @notice Checks if user's address has contact with given id
